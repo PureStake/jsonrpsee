@@ -63,12 +63,12 @@ pub type AsyncMethod<'a> =
 /// For stateless protocols such as http it's unused, so feel free to set it some hardcoded value.
 pub type ConnectionId = usize;
 /// Subscription ID.
-pub type SubscriptionId = u64;
+pub type SubscriptionId = String;
 
 type Subscribers = Arc<Mutex<FxHashMap<SubscriptionKey, (MethodSink, oneshot::Receiver<()>)>>>;
 
 /// Represent a unique subscription entry based on [`SubscriptionId`] and [`ConnectionId`].
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct SubscriptionKey {
 	conn_id: ConnectionId,
 	sub_id: SubscriptionId,
@@ -374,6 +374,7 @@ impl Methods {
 		rx.next().await
 	}
 
+	#[cfg(test)]
 	/// Test helper that sets up a subscription using the given `method`. Returns a tuple of the
 	/// [`SubscriptionId`] and a channel on which subscription JSON payloads can be received.
 	pub async fn test_subscription(&self, method: &str, params: impl ToRpcParams) -> TestSubscription {
@@ -599,16 +600,16 @@ impl<Context: Send + Sync + 'static> RpcModule<Context> {
 				MethodCallback::new_sync(Arc::new(move |id, params, method_sink, conn_id| {
 					let (conn_tx, conn_rx) = oneshot::channel::<()>();
 					let sub_id = {
-						const JS_NUM_MASK: SubscriptionId = !0 >> 11;
-						let sub_id = rand::random::<SubscriptionId>() & JS_NUM_MASK;
-						let uniq_sub = SubscriptionKey { conn_id, sub_id };
+						use rustc_hex::ToHex as _;
+						let sub_id: String = format!("0x{}", rand::random::<u128>().to_le_bytes()[..].to_hex::<String>());
+						let uniq_sub = SubscriptionKey { conn_id, sub_id: sub_id.clone() };
 
 						subscribers.lock().insert(uniq_sub, (method_sink.clone(), conn_rx));
 
 						sub_id
 					};
 
-					method_sink.send_response(id.clone(), sub_id);
+					method_sink.send_response(id.clone(), sub_id.clone());
 
 					let sink = SubscriptionSink {
 						inner: method_sink.clone(),
@@ -636,7 +637,7 @@ impl<Context: Send + Sync + 'static> RpcModule<Context> {
 			self.methods.mut_callbacks().insert(
 				unsubscribe_method_name,
 				MethodCallback::new_sync(Arc::new(move |id, params, sink, conn_id| {
-					let sub_id = match params.one() {
+					let sub_id: SubscriptionId = match params.one() {
 						Ok(sub_id) => sub_id,
 						Err(_) => {
 							tracing::error!(
@@ -650,7 +651,7 @@ impl<Context: Send + Sync + 'static> RpcModule<Context> {
 						}
 					};
 
-					if subscribers.lock().remove(&SubscriptionKey { conn_id, sub_id }).is_some() {
+					if subscribers.lock().remove(&SubscriptionKey { conn_id, sub_id: sub_id.clone() }).is_some() {
 						sink.send_response(id, "Unsubscribed")
 					} else {
 						let err = to_json_raw_value(&format!("Invalid subscription ID={}", sub_id)).ok();
@@ -706,7 +707,10 @@ impl SubscriptionSink {
 		serde_json::to_string(&SubscriptionResponse {
 			jsonrpc: TwoPointZero,
 			method: self.method.into(),
-			params: SubscriptionPayload { subscription: RpcSubscriptionId::Num(self.uniq_sub.sub_id), result },
+			params: SubscriptionPayload {
+				subscription: RpcSubscriptionId::Str(self.uniq_sub.sub_id.clone()),
+				result,
+			},
 		})
 		.map_err(Into::into)
 	}
@@ -715,11 +719,12 @@ impl SubscriptionSink {
 		let res = match self.is_connected.as_ref() {
 			Some(conn) if !conn.is_canceled() => {
 				// unbounded send only fails if the receiver has been dropped.
+				let sub_id = self.uniq_sub.sub_id.clone();
 				self.inner.send_raw(msg).map_err(|_| {
-					Some(SubscriptionClosedError::new("Closed by the client (connection reset)", self.uniq_sub.sub_id))
+					Some(SubscriptionClosedError::new("Closed by the client (connection reset)", sub_id))
 				})
 			}
-			Some(_) => Err(Some(SubscriptionClosedError::new("Closed by unsubscribe call", self.uniq_sub.sub_id))),
+			Some(_) => Err(Some(SubscriptionClosedError::new("Closed by unsubscribe call", self.uniq_sub.sub_id.clone()))),
 			// NOTE(niklasad1): this should be unreachble, after the first error is detected the subscription is closed.
 			None => Err(None),
 		};
@@ -729,14 +734,14 @@ impl SubscriptionSink {
 		}
 
 		res.map_err(|e| {
-			let err = e.unwrap_or_else(|| SubscriptionClosedError::new("Close reason unknown", self.uniq_sub.sub_id));
+			let err = e.unwrap_or_else(|| SubscriptionClosedError::new("Close reason unknown", self.uniq_sub.sub_id.clone()));
 			Error::SubscriptionClosed(err)
 		})
 	}
 
 	/// Close the subscription sink with a customized error message.
 	pub fn close(&mut self, msg: &str) {
-		let err = SubscriptionClosedError::new(msg, self.uniq_sub.sub_id);
+		let err = SubscriptionClosedError::new(msg, self.uniq_sub.sub_id.clone());
 		self.inner_close(&err);
 	}
 
@@ -752,7 +757,7 @@ impl SubscriptionSink {
 
 impl Drop for SubscriptionSink {
 	fn drop(&mut self) {
-		let err = SubscriptionClosedError::new("Closed by the server", self.uniq_sub.sub_id);
+		let err = SubscriptionClosedError::new("Closed by the server", self.uniq_sub.sub_id.clone());
 		self.inner_close(&err);
 	}
 }

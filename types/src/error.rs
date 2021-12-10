@@ -183,12 +183,12 @@ impl Error {
 #[derive(Deserialize, Serialize, Debug, PartialEq)]
 pub struct SubscriptionClosedError {
 	subscription_closed: String,
-	id: u64,
+	id: String,
 }
 
 impl SubscriptionClosedError {
 	/// Create a new subscription closed error.
-	pub fn new(reason: impl Into<String>, id: u64) -> Self {
+	pub fn new(reason: impl Into<String>, id: String) -> Self {
 		Self { subscription_closed: reason.into(), id }
 	}
 
@@ -198,8 +198,8 @@ impl SubscriptionClosedError {
 	}
 
 	/// Get the subscription ID.
-	pub fn subscription_id(&self) -> u64 {
-		self.id
+	pub fn subscription_id(&self) -> String {
+		self.id.clone()
 	}
 }
 

@@ -21,6 +21,7 @@ serde = { version = "1.0", default-features = false, features = ["derive"], opti
 serde_json = { version = "1", features = ["raw_value"], optional = true }
 parking_lot = { version = "0.11", optional = true }
 tokio = { version = "1.8", features = ["rt"], optional = true }
+rustc-hex = "2.1.0"
 
 [features]
 default = []
