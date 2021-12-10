@@ -338,6 +338,7 @@ impl<M: Middleware> Server<M> {
 						if is_single {
 							if let Ok(req) = serde_json::from_slice::<Request>(&body) {
 								middleware.on_call(req.method.as_ref());
+								log::warn!("request: {:?}", req);
 
 								// NOTE: we don't need to track connection id on HTTP, so using hardcoded 0 here.
 								match methods.execute_with_resources(&sink, req, 0, &resources) {
@@ -408,6 +409,7 @@ impl<M: Middleware> Server<M> {
 						} else {
 							collect_batch_response(rx).await
 						};
+						log::warn!("[service_fn] sending back: {:?}", &response[..cmp::min(response.len(), 1024)]);
 						tracing::debug!("[service_fn] sending back: {:?}", &response[..cmp::min(response.len(), 1024)]);
 						middleware.on_response(request_start);
 						Ok::<_, HyperError>(response::ok_response(response))
