@@ -470,6 +470,7 @@ impl<M: Middleware> Server<M> {
 							// to be read in a browser.
 							Method::POST if content_type_is_json(&request) => {
 								let origin = return_origin_if_different_from_host(request.headers()).cloned();
+								tracing::debug!("{:?}", request);
 								let mut res = process_validated_request(
 									request,
 									middleware,
